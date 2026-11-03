@@ -26,6 +26,14 @@ function normalize(segments) {
   if (total > 65000) throw new ApiError(422, 'LECTURE_TOO_LONG', 'This lecture has more than 65,000 characters of captions. Please use a shorter lecture or an individual chapter so notes stay grounded and reliable.');
   return result;
 }
+export function transcriptFailureKind(primaryError, fallbackError) {
+  const message = `${primaryError?.message || primaryError || ''} ${fallbackError?.message || fallbackError || ''}`;
+  // YouTube can return HTML/player-access errors that the transcript client mislabels as "disabled".
+  // Prefer access-block evidence over a no-caption hint so we do not tell creators captions are off incorrectly.
+  if (/captcha|too many requests|ip.*blocked|blocked.*ip|sign[ -]?in|login[_ ]required|not a bot|confirm.*not a bot|http\\s*400|\\b403\\b|\\b429\\b|unusual traffic/i.test(message)) return 'YOUTUBE_BLOCKED';
+  if (/transcript is disabled|captions? (?:are )?disabled|turn off captions/i.test(message)) return 'CAPTIONS_DISABLED';
+  return 'TRANSCRIPT_UNAVAILABLE';
+}
 export async function extractTranscript(videoId) {
   let lastError;
   for (const lang of ['en', 'hi', undefined]) {
@@ -56,10 +64,10 @@ export async function extractTranscript(videoId) {
   } catch (error) {
     if (error instanceof ApiError) throw error;
     console.error('Caption extraction failed:', error?.message?.slice(0, 250));
-    const message = String(lastError?.message || error?.message || '');
-    if (/disabled|turn off captions/i.test(message)) throw new ApiError(422, 'CAPTIONS_DISABLED', 'Captions are disabled for this video. Ask the creator to enable captions, or choose another lecture. We cannot generate grounded notes without a transcript.');
-    if (/too many|ip|blocked|captcha|sign in|429/i.test(message)) throw new ApiError(503, 'YOUTUBE_BLOCKED', 'YouTube is restricting transcript access from this server. Please try again later. The deployment owner can configure a compliant caption proxy; no video content has been analyzed.');
-    throw new ApiError(422, 'TRANSCRIPT_UNAVAILABLE', 'This video is unavailable, private, or has no accessible English/Hindi captions. Check that it plays in your browser and has a transcript, then try another lecture.');
+    const failure = transcriptFailureKind(lastError, error);
+    if (failure === 'YOUTUBE_BLOCKED') throw new ApiError(503, failure, 'YouTube is restricting transcript access from this server. Please try again later. The deployment owner can configure a compliant caption proxy; no video content has been analyzed.');
+    if (failure === 'CAPTIONS_DISABLED') throw new ApiError(422, failure, 'YouTube reported no caption tracks for this video. This can also happen when transcript access is restricted; try another lecture or retry later. We cannot generate grounded notes without a transcript.');
+    throw new ApiError(422, failure, 'This video is unavailable, private, or has no accessible captions. Check that it plays in your browser and has a transcript, then try another lecture.');
   }
 }
 export function transcriptText(segments) { return segments.map(s => `[${Math.floor(s.offset)}s] ${s.text}`).join('\n'); }
