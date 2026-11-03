@@ -1,6 +1,8 @@
 -- StudyMind AI: run in the Supabase SQL editor before enabling credentials.
 -- All user data is protected by row-level security. No service-role key is required.
 create extension if not exists pgcrypto;
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
